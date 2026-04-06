@@ -39,49 +39,39 @@ db_manager = DatabaseManager(Config.DATABASE_URL)
 db_manager.create_tables()
 
 
-def get_or_create_user_data(telegram_user):
+def get_or_create_user(telegram_user) -> User:
+    """Get or create user in database"""
     session = db_manager.get_session()
     try:
         user = session.query(User).filter_by(telegram_id=telegram_user.id).first()
-
+        
         if not user:
-            user = User(...)
+            user = User(
+                telegram_id=telegram_user.id,
+                username=telegram_user.username,
+                first_name=telegram_user.first_name,
+                last_name=telegram_user.last_name,
+                language_code=telegram_user.language_code or 'ru',
+                referral_code=generate_referral_code(),
+                is_admin=telegram_user.id in Config.ADMIN_IDS
+            )
             session.add(user)
             session.commit()
             session.refresh(user)
-
+            logger.info(f"New user created: {user.telegram_id}")
+        
+        # Update user activity
         user.last_activity = datetime.utcnow()
         session.commit()
-
-        # 👇 ВАЖНО: сразу вытаскиваем всё нужное
-        user_data = {
-            "id": user.id,
-            "telegram_id": user.telegram_id,
-            "first_name": user.first_name,
-            "created_at": user.created_at,
-            "total_spent": user.total_spent,
-            "referral_code": user.referral_code,
-            "referral_balance": user.referral_balance,
-            "total_referrals": user.total_referrals,
-            "has_subscription": any(
-                sub.is_active and not sub.is_expired for sub in user.subscriptions
-            ),
-            "subscription": next(
-                (sub for sub in user.subscriptions if sub.is_active and not sub.is_expired),
-                None
-            )
-        }
-
-        return user_data
+        
+        return user
     finally:
         session.close()
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command"""
-    user = get_or_create_user_data(update.effective_user)
-
-    if user["has_subscription"]:
+    user = get_or_create_user(update.effective_user)
     
     # Handle referral code
     if context.args and user.referrer_id is None:
